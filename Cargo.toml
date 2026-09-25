@@ -1,0 +1,40 @@
+[package]
+name = "folder-lock"
+version = "0.1.0"
+edition = "2024"
+description = "Windows 폴더 잠금 (숨김 + 접근 차단, 파일 내용은 건드리지 않음)"
+
+[lib]
+name = "folderlock"
+path = "src/lib.rs"
+
+[[bin]]
+name = "FolderLock"
+path = "src/main.rs"
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std"] }
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "accesskit"] }
+humantime = "2.4.0"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.189"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Memory"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
+# 테스트에서 Argon2가 느리지 않도록 의존성은 개발 빌드에서도 최적화한다.
+[profile.dev.package."*"]
+opt-level = 2
