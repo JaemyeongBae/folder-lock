@@ -173,13 +173,32 @@ struct Fixture {
     hash: String,
 }
 
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        // 잠금 플래그가 남아 있으면 임시 폴더가 지워지지 않는다.
+        open_up(&self.root);
+    }
+}
+
 fn fixture(seed: u64) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("잠글 폴더");
     fs::create_dir(&root).unwrap();
     make_tree(&root, seed);
-    let exe = tmp.path().join("app.exe");
-    fs::write(&exe, format!("fake exe {seed}").repeat(1000)).unwrap();
+    // 홀수 시드는 macOS처럼 폴더형 입구(.app 번들), 짝수는 Windows처럼 파일 하나.
+    let exe = if seed % 2 == 1 {
+        let app = tmp.path().join("entry.app");
+        fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        fs::write(app.join("Contents/Info.plist"), format!("plist {seed}")).unwrap();
+        let script = app.join("Contents/MacOS/unlock");
+        fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        app
+    } else {
+        let exe = tmp.path().join("app.exe");
+        fs::write(&exe, format!("fake exe {seed}").repeat(1000)).unwrap();
+        exe
+    };
     Fixture { hash: hash_password(PW), root, exe, _tmp: tmp }
 }
 
@@ -191,7 +210,7 @@ fn engine<P: Platform>(p: P) -> Engine<P> {
 fn open_up(root: &Path) {
     for d in [root.join(VAULT_DIR), root.join(VAULT_DIR).join(DATA_DIR)] {
         if d.exists() {
-            let _ = fs::set_permissions(&d, fs::Permissions::from_mode(0o700));
+            let _ = OsPlatform.unprotect(&d);
         }
     }
 }
@@ -259,6 +278,22 @@ fn lock_unlock_roundtrip_many_trees() {
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         assert_eq!(snapshot(&f.root), orig, "seed {seed}");
     }
+}
+
+#[test]
+fn bundle_entry_keeps_exec_bit_and_vault_resists_deletion() {
+    let f = fixture(1);
+    let orig = snapshot(&f.root);
+    let e = engine(OsPlatform);
+    e.lock(&f.root, &f.hash, Some(&f.exe)).unwrap();
+    let script = f.root.join(UNLOCK_EXE_NAME).join("Contents/MacOS/unlock");
+    assert_eq!(fs::metadata(&script).unwrap().permissions().mode() & 0o111, 0o111);
+    let vault = f.root.join(VAULT_DIR);
+    assert!(fs::remove_dir_all(&vault).is_err());
+    assert!(fs::rename(&vault, f.root.join("moved")).is_err(), "보관 폴더 이름 바꾸기가 막혀야 함");
+    assert!(vault.join("meta.json").exists());
+    e.unlock(&f.root, PW, None).unwrap();
+    assert_eq!(snapshot(&f.root), orig);
 }
 
 #[test]

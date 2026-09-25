@@ -9,8 +9,13 @@ pub const VAULT_DIR: &str = ".folderlock";
 pub const DATA_DIR: &str = "data";
 pub const META_FILE: &str = "meta.json";
 pub const META_TMP_FILE: &str = "meta.json.tmp";
-/// 잠긴 폴더에 복사해 두는 잠금 해제 실행 파일 이름.
+/// 잠긴 폴더에 넣어 두는 잠금 해제 입구 이름 (Windows: 앱 exe 사본, macOS: 앱을 여는 작은 .app).
+#[cfg(windows)]
 pub const UNLOCK_EXE_NAME: &str = "잠금 해제.exe";
+#[cfg(not(windows))]
+pub const UNLOCK_EXE_NAME: &str = "잠금 해제.app";
+/// 잠금 해제 입구를 보관 폴더 안에 먼저 복사해 두는 임시 이름. 다 복사된 뒤에만 폴더로 옮긴다.
+pub const ENTRY_TMP: &str = "entry.tmp";
 
 pub const META_VERSION: u32 = 1;
 
@@ -27,7 +32,8 @@ pub enum LockState {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct UnlockExe {
     pub name: String,
-    /// 우리가 복사한 파일인지 확인한 뒤에만 지우기 위해 기록한다.
+    /// 우리가 넣은 것인지 확인한 뒤에만 지우기 위해 기록한다.
+    /// 파일이면 SHA-256, 폴더(.app)면 하위 항목 전체의 트리 해시.
     pub sha256: String,
 }
 
@@ -49,6 +55,7 @@ pub struct Layout {
     pub data: PathBuf,
     pub meta: PathBuf,
     pub meta_tmp: PathBuf,
+    pub entry_tmp: PathBuf,
 }
 
 impl Layout {
@@ -59,6 +66,7 @@ impl Layout {
             data: vault.join(DATA_DIR),
             meta: vault.join(META_FILE),
             meta_tmp: vault.join(META_TMP_FILE),
+            entry_tmp: vault.join(ENTRY_TMP),
             vault,
         }
     }

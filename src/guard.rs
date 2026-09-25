@@ -146,6 +146,16 @@ pub fn default_rules(extra_protected: &[PathBuf]) -> Rules {
         }
         if let Some(home) = env("HOME") {
             rules.forbidden_tree.push(home.join("Library"));
+            for sync in ["Dropbox", "Google Drive", "MYBOX", "OneDrive"] {
+                rules.forbidden_tree.push(home.join(sync));
+            }
+            // "데스크탑 및 문서 폴더" iCloud 동기화가 켜져 있으면 그 아래 전부 동기화되므로 막는다.
+            let icloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+            for sub in ["Desktop", "Documents"] {
+                if icloud.join(sub).exists() {
+                    rules.forbidden_tree.push(home.join(sub));
+                }
+            }
             for sub in ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies"] {
                 rules.forbidden_exact.push(home.join(sub));
             }

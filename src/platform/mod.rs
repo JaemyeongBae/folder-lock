@@ -68,7 +68,10 @@ impl Platform for OsPlatform {
     fn copy_file_new(&self, from: &Path, to: &Path) -> io::Result<()> {
         let mut src = File::open(from)?;
         let mut dst = OpenOptions::new().write(true).create_new(true).open(to)?;
-        let result = io::copy(&mut src, &mut dst).and_then(|_| dst.sync_all());
+        let result = io::copy(&mut src, &mut dst)
+            // 실행 권한(.app 안의 스크립트)을 유지한다. Windows에선 읽기 전용이 옮겨 붙어 삭제를 막으므로 하지 않는다.
+            .and_then(|_| if cfg!(unix) { dst.set_permissions(src.metadata()?.permissions()) } else { Ok(()) })
+            .and_then(|_| dst.sync_all());
         if result.is_err() {
             drop(dst);
             // 방금 우리가 만든 불완전한 복사본만 지운다.

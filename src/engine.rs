@@ -4,7 +4,8 @@
 //! 1. 사용자 항목은 같은 볼륨 안에서 "이름 바꾸기"로만 옮긴다. 복사·암호화·덮어쓰기를 하지 않는다.
 //! 2. 옮기는 단위는 최상위 항목 하나(파일 또는 폴더 통째)이며, 각 이동은 원자적이다.
 //!    따라서 어느 순간 중단돼도 모든 항목은 원래 자리 또는 보관 폴더 중 한 곳에 온전히 있다.
-//! 3. 지우는 것은 우리가 만든 것뿐이다: meta.json(.tmp), 빈 디렉터리, 해시가 일치하는 잠금 해제 exe.
+//! 3. 지우는 것은 우리가 만든 것뿐이다: meta.json(.tmp), 빈 디렉터리, 해시가 일치하는 잠금 해제 입구,
+//!    보관 폴더 안의 예약된 임시 입구(entry.tmp).
 //! 4. 상태는 meta.json에 먼저 기록하고 움직인다. 중단되면 다음 실행 때 이어서 끝낸다.
 
 use std::ffi::{OsStr, OsString};
@@ -106,6 +107,38 @@ pub fn sha256_file(path: &Path) -> io::Result<String> {
         hasher.update(&buf[..n]);
     }
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// 잠금 해제 입구의 지문. 파일이면 SHA-256, 폴더면 하위 항목 목록과 각 파일 해시를 합친 해시.
+/// 링크는 따라가지 않고 거부한다.
+pub fn entry_hash(path: &Path) -> io::Result<String> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_file() {
+        return sha256_file(path);
+    }
+    if !meta.is_dir() {
+        return Err(io::Error::other("파일이나 폴더가 아닙니다"));
+    }
+    fn walk(base: &Path, dir: &Path, out: &mut String) -> io::Result<()> {
+        for name in sorted_names(dir)? {
+            let p = dir.join(&name);
+            let rel = p.strip_prefix(base).map_err(io::Error::other)?.to_string_lossy().into_owned();
+            let m = fs::symlink_metadata(&p)?;
+            if m.is_dir() {
+                out.push_str(&format!("d {rel}\n"));
+                walk(base, &p, out)?;
+            } else if m.is_file() {
+                out.push_str(&format!("f {rel} {}\n", sha256_file(&p)?));
+            } else {
+                return Err(io::Error::other("링크가 들어 있습니다"));
+            }
+        }
+        Ok(())
+    }
+    let mut listing = String::new();
+    walk(path, path, &mut listing)?;
+    let digest = Sha256::digest(listing.as_bytes());
+    Ok(format!("tree:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>()))
 }
 
 fn exists(p: &Path) -> bool {
@@ -225,7 +258,7 @@ impl<P: Platform> Engine<P> {
         let unlock_exe = match unlock_exe_src {
             Some(src) => Some(UnlockExe {
                 name: UNLOCK_EXE_NAME.into(),
-                sha256: ctx(sha256_file(src), || "잠금 해제 실행 파일 읽기".into())?,
+                sha256: ctx(entry_hash(src), || "잠금 해제 입구 읽기".into())?,
             }),
             None => None,
         };
@@ -259,7 +292,7 @@ impl<P: Platform> Engine<P> {
             .filter(|name| match &meta.unlock_exe {
                 // 우리가 복사한 잠금 해제 exe는 옮기지 않는다.
                 Some(exe) if name == exe.name.as_str() => {
-                    sha256_file(&l.root.join(name)).ok().as_deref() != Some(exe.sha256.as_str())
+                    entry_hash(&l.root.join(name)).ok().as_deref() != Some(exe.sha256.as_str())
                 }
                 _ => true,
             })
@@ -281,8 +314,8 @@ impl<P: Platform> Engine<P> {
         if let (Some(src), Some(exe)) = (unlock_exe_src, &meta.unlock_exe) {
             let dst = l.root.join(&exe.name);
             if !exists(&dst) {
-                if let Err(e) = self.platform.copy_file_new(src, &dst) {
-                    report.warnings.push(format!("잠금 해제 실행 파일을 폴더에 넣지 못했습니다: {e}"));
+                if let Err(e) = self.place_entry(l, src, &dst) {
+                    report.warnings.push(format!("잠금 해제 입구를 폴더에 넣지 못했습니다: {e}"));
                 }
             }
         }
@@ -290,6 +323,50 @@ impl<P: Platform> Engine<P> {
         self.write_meta(l, meta)?;
         self.apply_protection(l)?;
         Ok(report)
+    }
+
+    /// 보관 폴더 안에 다 복사한 뒤 한 번에 옮긴다. 도중에 꺼져도 반쯤 복사된 입구가 사용자 폴더에 남지 않는다.
+    fn place_entry(&self, l: &Layout, src: &Path, dst: &Path) -> io::Result<()> {
+        self.remove_staged_entry(l)?;
+        let result = self
+            .copy_entry(src, &l.entry_tmp)
+            .and_then(|_| self.platform.move_no_replace(&l.entry_tmp, dst));
+        if result.is_err() {
+            let _ = self.remove_staged_entry(l);
+        }
+        result
+    }
+
+    fn copy_entry(&self, src: &Path, dst: &Path) -> io::Result<()> {
+        let meta = fs::symlink_metadata(src)?;
+        if meta.is_file() {
+            return self.platform.copy_file_new(src, dst);
+        }
+        if !meta.is_dir() {
+            return Err(io::Error::other("링크는 복사하지 않습니다"));
+        }
+        self.platform.create_dir(dst)?;
+        for name in sorted_names(src)? {
+            self.copy_entry(&src.join(&name), &dst.join(&name))?;
+        }
+        Ok(())
+    }
+
+    /// 앱이 만든 것으로 확인된 입구만 지운다 (해시 확인은 호출하는 쪽에서).
+    fn remove_entry(&self, path: &Path) -> io::Result<()> {
+        let meta = fs::symlink_metadata(path)?;
+        if !meta.is_dir() {
+            return self.platform.remove_file(path);
+        }
+        for name in sorted_names(path)? {
+            self.remove_entry(&path.join(&name))?;
+        }
+        self.platform.remove_dir(path)
+    }
+
+    /// 보관 폴더 안의 예약된 임시 이름(entry.tmp)은 항상 앱이 만든 것이다.
+    fn remove_staged_entry(&self, l: &Layout) -> io::Result<()> {
+        if exists(&l.entry_tmp) { self.remove_entry(&l.entry_tmp) } else { Ok(()) }
     }
 
     fn apply_protection(&self, l: &Layout) -> Result<(), Error> {
@@ -361,9 +438,14 @@ impl<P: Platform> Engine<P> {
         // 잠금 해제 exe를 먼저 치워야 같은 이름의 사용자 파일이 원래 이름으로 돌아간다.
         if let Some(exe) = meta.as_ref().and_then(|m| m.unlock_exe.clone()) {
             let p = l.root.join(&exe.name);
-            match sha256_file(&p) {
+            match entry_hash(&p) {
                 Ok(h) if h == exe.sha256 => {
-                    if let Err(e) = self.platform.remove_file(&p) {
+                    // 한 번에 보관 폴더 안 임시 이름으로 옮긴 뒤 지운다. 도중에 꺼져도 반쯤 지워진 입구가 폴더에 남지 않는다.
+                    let removed = self
+                        .remove_staged_entry(l)
+                        .and_then(|_| self.platform.move_no_replace(&p, &l.entry_tmp))
+                        .and_then(|_| self.remove_staged_entry(l));
+                    if let Err(e) = removed {
                         report.warnings.push(format!("'{}'를 지우지 못했습니다. 직접 지워도 됩니다: {e}", exe.name));
                     }
                 }
@@ -390,6 +472,7 @@ impl<P: Platform> Engine<P> {
             return Err(Error::Incomplete { failed });
         }
 
+        ctx(self.remove_staged_entry(l), || "임시 입구 정리".into())?;
         for f in [&l.meta, &l.meta_tmp] {
             match self.platform.remove_file(f) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => {
@@ -440,6 +523,7 @@ impl<P: Platform> Engine<P> {
     }
 
     fn cleanup_stale(&self, l: &Layout) -> Result<(), Error> {
+        ctx(self.remove_staged_entry(l), || "임시 입구 정리".into())?;
         match self.platform.remove_file(&l.meta_tmp) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
                 return Err(Error::Io { context: "임시 상태 파일 정리".into(), source: e });

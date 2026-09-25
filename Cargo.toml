@@ -2,7 +2,9 @@
 name = "folder-lock"
 version = "0.1.0"
 edition = "2024"
-description = "Windows 폴더 잠금 (숨김 + 접근 차단, 파일 내용은 건드리지 않음)"
+description = "Windows·macOS 폴더 잠금 (숨김 + 접근 차단, 파일 내용은 건드리지 않음)"
+license = "MIT"
+repository = "https://github.com/jmmi/folder-lock"
 
 [lib]
 name = "folderlock"
