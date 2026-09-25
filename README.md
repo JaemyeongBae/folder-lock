@@ -31,15 +31,22 @@
 | 보관 폴더를 열면 | 열림 | 액세스 거부 |
 | 삭제·이름 바꾸기 | 됨 | 거부 |
 
+## 다운로드
+| 운영체제 | 파일 |
+|---|---|
+| **Windows** 10/11 (64비트) | [⬇ FolderLock-windows-x64.exe](https://github.com/jmmi/folder-lock/releases/latest/download/FolderLock-windows-x64.exe) |
+| **macOS** 11 이상 (Apple Silicon·Intel) | [⬇ FolderLock-macos.zip](https://github.com/jmmi/folder-lock/releases/latest/download/FolderLock-macos.zip) |
+
+이전 버전과 SHA-256 체크섬은 [Releases](https://github.com/jmmi/folder-lock/releases)에 있습니다.
+
 ## 설치와 사용
-빌드된 파일은 아직 배포하지 않습니다 (아래 "직접 빌드" 참고).
 
 1. 앱 실행 → **폴더 추가** → 폴더 선택 → 비밀번호 설정
 2. **잠그기** → 폴더 안에는 잠금 해제 입구만 보입니다
 3. 풀 때: 앱에서 **잠금 해제**, 또는 폴더 안 잠금 해제 입구를 열고 비밀번호 입력
 
-- Windows: `FolderLock.exe` 하나. 서명이 없어 처음엔 SmartScreen에서 "추가 정보 → 실행".
-- macOS: `폴더 잠금.app`을 응용 프로그램 폴더로. 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기".
+- Windows: 받은 exe 하나로 바로 실행. 서명이 없어 처음엔 SmartScreen에서 "추가 정보 → 실행".
+- macOS: zip을 풀어 `폴더 잠금.app`을 응용 프로그램 폴더로. 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기".
   폴더 안 `잠금 해제.app`은 설치된 앱을 부르는 작은 앱이라, 앱이 없는 Mac에서는 안내만 뜹니다.
 
 > **Windows 버전은 아직 실기 테스트 전입니다.** 중요한 자료에 쓰기 전에 복사본 폴더로 먼저 시험해 주세요
