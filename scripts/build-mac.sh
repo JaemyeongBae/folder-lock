@@ -3,6 +3,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH
+# 빌드한 Mac의 홈 경로(사용자 이름)가 실행 파일에 남지 않게 한다.
+export RUSTFLAGS="--remap-path-prefix=$HOME=/build"
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 cargo build --release --target aarch64-apple-darwin
